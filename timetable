@@ -4,6 +4,7 @@ require 'yaml'
 
 class Timetable
   attr_reader :sections, :start_time
+  alias_method :subsections, :sections
 
   def self.parse filename, time
     file = File.read(filename)
@@ -14,7 +15,7 @@ class Timetable
     @sections = []
     last_time = Moment.new(time)
     body.each_with_index do |section, number|
-      section = Section.new(section, number, last_time)
+      section = Section.new(section, number, last_time, self)
       last_time = section.start_time + section.duration
       @sections << section
     end
@@ -24,12 +25,61 @@ class Timetable
     @start_time = Moment.new time
   end
 
+  def current_section
+    current = nil
+    @sections.each do |section|
+      break if current = section.find_current
+    end
+    current
+  end
+
+  def next_section
+    @sections.each_with_index do |section, idx|
+      current = section.find_current
+      return current.next if current
+    end
+  end
+
   def report
     output = []
     output = @sections.map do |section|
       section.to_s
     end
     output.join "\n"
+  end
+
+  def title
+    "Timetable\n" <<
+      "---------"
+  end
+
+  def run
+    while true
+      system("clear")
+
+      now = Time.now
+      hour, min, sec = now.hour, now.min, now.sec
+      moment = Moment.new("#{hour}:#{min}")
+
+      puts title
+      puts
+      puts report
+      puts
+      puts
+      puts "[#{moment}:#{sec.to_s.rjust(2, '0')}]"
+      puts
+      puts "Current section:"
+      puts "\t" << (current_section.to_s || "No current session")
+
+      puts "Next up:"
+      puts "\t#{next_section}"
+
+      sleep 0.5
+    end
+  end
+
+  def first_terminal
+    @sections.first.first_terminal
   end
 
   class Moment
@@ -46,6 +96,22 @@ class Timetable
       Moment.new "#{hours}:#{minutes}"
     end
 
+    def - moment
+      wrap, minutes = (@minutes - moment.minutes).divmod 60
+      hours         = @hours - moment.hours + wrap
+
+      Moment.new "#{hours}:#{minutes}"
+    end
+
+    def < moment
+      rest = self - moment
+      rest.hours < 0
+    end
+
+    def > moment
+      moment < self
+    end
+
     def to_s
       hours, minutes = [@hours, @minutes].map { |e| e.to_s.rjust(2, '0') }
       "#{hours}:#{minutes}"
@@ -57,7 +123,7 @@ class Timetable
   end
 
   class Section
-    attr_reader :name, :number, :duration, :subsections, :start_time
+    attr_reader :name, :number, :duration, :subsections, :start_time, :parent
 
     def initialize(body, number, start_time, parent=nil)
       @subsections = []
@@ -85,8 +151,42 @@ class Timetable
       @duration || @subsections.map(&:duration).reduce(:+)
     end
 
+    def next
+      if @parent.subsections.length - 1 == @number
+        @parent.parent.subsections[1].first_terminal
+      else
+        @parent.subsections[@number + 1].first_terminal
+      end
+    end
+
+    def first_terminal
+      return self unless @subsections.any?
+      @subsections.first.first_terminal
+    end
+
+    def find_current(time=Time.now)
+      now = Moment.new("#{time.hour}:#{time.min}")
+
+      if @start_time < now &&
+        @duration &&
+        @duration + @start_time > now
+        return self
+      end
+
+      @subsections.each do |subsection|
+        current = subsection.find_current(time)
+        return current if current
+      end
+
+      nil
+    end
+
     def full_number
-      @parent ? "#{@parent.full_number}.#{@number.to_s}" : @number.to_s
+      if @parent.is_a?(Section)
+        "#{@parent.full_number}.#{@number.to_s}"
+      else
+        @number.to_s
+      end
     end
 
     def to_s(indentation_level=0)
@@ -152,6 +252,30 @@ class Timetable
       moment.hours.must_equal 18
       moment.minutes.must_equal 10
     end
+
+    it 'substracts from another moment naively' do
+      moment = Moment.new("16:30") - Moment.new("0:10")
+      moment.hours.must_equal 16
+      moment.minutes.must_equal 20
+    end
+
+    it 'subtracts from another moment wrapping minutes' do
+      moment = Moment.new("16:30") - Moment.new("1:40")
+      moment.hours.must_equal 14
+      moment.minutes.must_equal 50
+    end
+
+    it 'compares to another moment' do
+      moment              = Moment.new("16:30")
+      earlier_moment      = Moment.new("16:20")
+      much_earlier_moment = Moment.new("12:20")
+      later_moment        = Moment.new("17:20")
+
+      moment.must_be :>, earlier_moment
+      moment.must_be :>, much_earlier_moment
+      moment.must_be :<, later_moment
+      moment.must_equal moment
+    end
   end
 
   describe Section do
@@ -174,6 +298,61 @@ class Timetable
 
     it 'converts to string' do
       @section.to_s.must_equal "2. Intro                    [16:00]"
+    end
+
+    describe '#next' do
+      before do
+        @timetable = Timetable.new([
+          { "Section 0" => [{ "Subsection 0.0" => 10 }] },
+          { "Section 1" => [{ "Subsection 1.0" => 10 }, { "Subsection 1.1" => 10 }] },
+        ], "16:00")
+      end
+
+      describe 'when it is the last subsection in a section' do
+        it 'returns the next toplevel section' do
+          first = @timetable.sections.first.subsections.first
+          first.next.must_equal @timetable.sections.last.subsections.first
+        end
+      end
+
+      describe 'otherwise' do
+        it 'returns its next sibling' do
+          last = @timetable.sections.last.subsections.first
+          last.next.must_equal @timetable.sections.last.subsections.last
+        end
+      end
+    end
+
+    describe '#find_current' do
+      before do
+        @now = Object.new
+        def @now.hour; 16; end
+        def @now.min; 30; end
+        def @now.to_moment; Moment.new("#{hour}:#{min}"); end
+      end
+
+      describe 'when the section is happening now' do
+        it 'returns it' do
+          @section = Section.new({"Name" => 10}, 2, @now.to_moment - Moment.new("00:01"))
+          @section.find_current(@now).must_equal @section
+        end
+      end
+
+      describe 'when a subsection is happening now' do
+        it 'returns it' do
+          @section = Section.new({"Name" => [{"Hello" => 10}]}, 2, @now.to_moment - Moment.new("00:01"))
+          @subsection = @section.subsections.first
+
+          @section.find_current(@now).must_equal @subsection
+        end
+      end
+
+      describe 'otherwise' do
+        it 'returns nil' do
+          @section = Section.new({"Name" => 10}, 2, @now.to_moment - Moment.new("05:00"))
+          @section.find_current(@now).must_equal nil
+        end
+      end
     end
 
     describe 'when the body contains children' do
