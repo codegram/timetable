@@ -50,6 +50,10 @@ class Timetable
       hours, minutes = [@hours, @minutes].map { |e| e.to_s.rjust(2, '0') }
       "#{hours}:#{minutes}"
     end
+
+    def == moment
+      @hours == moment.hours && @minutes = moment.minutes
+    end
   end
 
   class Section
@@ -104,8 +108,14 @@ end
 
 
 unless ARGV.empty?
-  timetable = Timetable.parse(*ARGV)
-  puts timetable.report
+  timetable = Timetable.parse ARGV[0], ARGV[1]
+  if ARGV[2] == "--report"
+    puts timetable.report
+  elsif ARGV[2] == "--run"
+    timetable.run
+  else
+    abort "USAGE: ./timetable file.yaml 16:00 --report|run"
+  end
   exit(0)
 end
 
@@ -154,7 +164,7 @@ class Timetable
 
     it 'initializes with a name, duration and a number' do
       @section.name.must_equal "Intro"
-      @section.duration.must_equal 10
+      @section.duration.must_equal Moment.new("00:10")
       @section.number.must_equal 2
     end
 
@@ -163,23 +173,23 @@ class Timetable
     end
 
     it 'converts to string' do
-      @section.to_s.must_equal "2. Intro [16:10]"
+      @section.to_s.must_equal "2. Intro                    [16:00]"
     end
 
     describe 'when the body contains children' do
       it 'has no duration' do
-        @nested_section.duration.must_equal nil
+        @nested_section.duration.must_equal Moment.new("00:10")
       end
 
       it 'initializes with a subsection' do
         foo = @nested_section.subsections.first
         foo.name.must_equal "Foo"
-        foo.duration.must_equal 10
+        foo.duration.must_equal Moment.new("00:10")
         foo.number.must_equal 0
       end
 
       it 'converts to string recursively' do
-        @nested_section.to_s.must_equal "2. Intro\n  2.0. Foo [16:10]"
+        @nested_section.to_s.must_equal "2. Intro\n  2.0. Foo                      [16:00]"
       end
 
       it 'converts to string recursively even when deeply nested' do
@@ -197,8 +207,8 @@ class Timetable
 2. Intro
   2.0. Foo
     2.0.0. Bar
-      2.0.0.0. Baz [16:10]
-      2.0.0.1. Answer [16:42]
+      2.0.0.0. Baz                      [16:00]
+      2.0.0.1. Answer                   [16:10]
 CODE
       end
     end
