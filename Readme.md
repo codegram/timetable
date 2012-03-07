@@ -66,7 +66,7 @@ flag:
 And imagining we're already at 15:30 and the course has started, we get this
 information, updated every second:
 
-![Timetable](timetable.png)
+![Timetable](https://github.com/codegram/timetable/raw/master/timetable.png)
 
 ## Running the tests
 
