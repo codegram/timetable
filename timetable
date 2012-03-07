@@ -1,0 +1,208 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+require 'yaml'
+
+class Timetable
+  attr_reader :sections, :start_time
+
+  def self.parse filename, time
+    file = File.read(filename)
+    new(YAML.load(file), time)
+  end
+
+  def initialize body, time
+    @sections = []
+    body.each_with_index do |section, number|
+      @sections << Section.new(section, number, self)
+    end
+    set_start time
+  end
+
+  def set_start time
+    @start_time = Moment.new time
+  end
+
+  def report
+    output = []
+    output = @sections.map do |section|
+      section.to_s
+    end
+    output.join "\n"
+  end
+
+  class Moment
+    attr_reader :hours, :minutes
+
+    def initialize time
+      @hours, @minutes = time.split(':').map &:to_i
+    end
+
+    def + moment
+      wrap, minutes = (@minutes + moment.minutes).divmod 60
+      hours         = @hours + moment.hours + wrap
+
+      Moment.new "#{hours}:#{minutes}"
+    end
+
+    def to_s
+      "#{@hours}:#{@minutes}"
+    end
+  end
+
+  class Section
+    attr_reader :name, :number, :duration, :subsections
+
+    def initialize(body, number, table, parent=nil)
+      @subsections = []
+
+      @name   = body.keys.first
+      @number = number
+      @parent = parent
+      @table  = table
+
+      if body.values.first.respond_to?(:each)
+        body.values.first.each_with_index do |subsection, number|
+          @subsections << Section.new(subsection, number, @table, self)
+        end
+      else
+        @duration = body.values.first # Intro => 10
+      end
+    end
+
+    def full_number
+      @parent ? "#{@parent.full_number}.#{@number.to_s}" : @number.to_s
+    end
+
+    def start_time
+      @table.start_time + Moment.new("00:#{@duration}")
+    end
+
+    def to_s(indentation_level=0)
+      output = []
+      output << '  ' * indentation_level
+      output << [full_number, @name].join('. ')
+      output << " [#{start_time}]" if @duration
+      if @subsections.any?
+        output << "\n"
+        output << @subsections.map do |subsection|
+          subsection.to_s(indentation_level + 1)
+        end.join("\n")
+      end
+      output.compact.join
+    end
+  end
+end
+
+
+unless ARGV.empty?
+  timetable = Timetable.parse(*ARGV)
+  puts timetable.report
+  exit(0)
+end
+
+### Tests
+# Execute `./timetable` without arguments to run the test suite.
+###
+
+require 'minitest/spec'
+require 'minitest/autorun'
+
+describe Timetable do
+  it 'initializes with an array of YAML hashes and a start time' do
+    timetable = Timetable.new [{ "Intro" => 10 }], "16:00"
+    timetable.sections.length.must_equal 1
+  end
+end
+
+class Timetable
+  describe Moment do
+    it 'initializes with a compact time' do
+      moment = Moment.new "16:30"
+      moment.hours.must_equal 16
+      moment.minutes.must_equal 30
+    end
+
+    it 'adds to another moment naively' do
+      moment = Moment.new("16:30") + Moment.new("1:10")
+      moment.hours.must_equal 17
+      moment.minutes.must_equal 40
+    end
+
+    it 'adds to another moment wrapping minutes' do
+      moment = Moment.new("16:30") + Moment.new("1:40")
+      moment.hours.must_equal 18
+      moment.minutes.must_equal 10
+    end
+  end
+
+  describe Section do
+    before do
+      @table = Object.new
+      def @table.start_time; Moment.new("16:00"); end
+
+      @section = Section.new({"Intro" => 10}, 2, @table)
+      @nested_section = Section.new({"Intro" => [{"Foo" => 10}]}, 2, @table)
+    end
+
+    it 'initializes with a name, duration and a number' do
+      @section.name.must_equal "Intro"
+      @section.duration.must_equal 10
+      @section.number.must_equal 2
+    end
+
+    it 'has a top level full number' do
+      @nested_section.full_number.must_equal "2"
+    end
+
+    it 'converts to string' do
+      @section.to_s.must_equal "2. Intro [16:10]"
+    end
+
+    describe 'when the body contains children' do
+      it 'has no duration' do
+        @nested_section.duration.must_equal nil
+      end
+
+      it 'initializes with a subsection' do
+        foo = @nested_section.subsections.first
+        foo.name.must_equal "Foo"
+        foo.duration.must_equal 10
+        foo.number.must_equal 0
+      end
+
+      it 'converts to string recursively' do
+        @nested_section.to_s.must_equal "2. Intro\n  2.0. Foo [16:10]"
+      end
+
+      it 'converts to string recursively even when deeply nested' do
+        deeply_nested = Section.new({
+          "Intro" => [
+            {"Foo" => [
+              {"Bar" => [
+                {"Baz"    => 10},
+                {"Answer" => 42},
+              ]}
+            ]}
+          ]
+        }, 2, @table)
+        deeply_nested.to_s.must_equal <<CODE.strip
+2. Intro
+  2.0. Foo
+    2.0.0. Bar
+      2.0.0.0. Baz [16:10]
+      2.0.0.1. Answer [16:42]
+CODE
+      end
+    end
+
+    describe 'a subsection' do
+      before do
+        @subsection = @nested_section.subsections.first
+      end
+
+      it 'has a qualified full number' do
+        @subsection.full_number.must_equal "2.0"
+      end
+    end
+  end
+end
