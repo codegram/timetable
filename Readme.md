@@ -68,6 +68,12 @@ information, updated every second:
 
 ![Timetable](https://github.com/codegram/timetable/raw/master/timetable.png)
 
+## Other possible uses
+
+* Tasks that need to be scheduled throughout the day
+* ???
+* Profit!
+
 ## Running the tests
 
 If you run `timetable` without any arguments, it will run its test suite to
