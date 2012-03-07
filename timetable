@@ -89,7 +89,8 @@ class Timetable
       output = []
       output << '  ' * indentation_level
       output << [full_number, @name].join('. ')
-      output << " [#{start_time}]" if @duration
+      tabs = " " * (25 - @name.length) rescue "  "
+      output << "#{tabs}[#{start_time}]" if @duration
       if @subsections.any?
         output << "\n"
         output << @subsections.map do |subsection|
