@@ -12,10 +12,12 @@ class Timetable
 
   def initialize body, time
     @sections = []
+    last_time = Moment.new(time)
     body.each_with_index do |section, number|
-      @sections << Section.new(section, number, self)
+      section = Section.new(section, number, last_time)
+      last_time = section.start_time + section.duration
+      @sections << section
     end
-    set_start time
   end
 
   def set_start time
@@ -45,36 +47,42 @@ class Timetable
     end
 
     def to_s
-      "#{@hours}:#{@minutes}"
+      hours, minutes = [@hours, @minutes].map { |e| e.to_s.rjust(2, '0') }
+      "#{hours}:#{minutes}"
     end
   end
 
   class Section
-    attr_reader :name, :number, :duration, :subsections
+    attr_reader :name, :number, :duration, :subsections, :start_time
 
-    def initialize(body, number, table, parent=nil)
+    def initialize(body, number, start_time, parent=nil)
       @subsections = []
 
       @name   = body.keys.first
       @number = number
       @parent = parent
-      @table  = table
+
+      @start_time = start_time
+
+      last_time = @start_time
 
       if body.values.first.respond_to?(:each)
         body.values.first.each_with_index do |subsection, number|
-          @subsections << Section.new(subsection, number, @table, self)
+          section = Section.new(subsection, number, last_time, self)
+          last_time = section.start_time + section.duration
+          @subsections << section
         end
       else
-        @duration = body.values.first # Intro => 10
+        @duration = Moment.new("00:#{body.values.first}") # Intro => 10
       end
+    end
+
+    def duration
+      @duration || @subsections.map(&:duration).reduce(:+)
     end
 
     def full_number
       @parent ? "#{@parent.full_number}.#{@number.to_s}" : @number.to_s
-    end
-
-    def start_time
-      @table.start_time + Moment.new("00:#{@duration}")
     end
 
     def to_s(indentation_level=0)
@@ -137,11 +145,10 @@ class Timetable
 
   describe Section do
     before do
-      @table = Object.new
-      def @table.start_time; Moment.new("16:00"); end
+      @start_time = Moment.new("16:00")
 
-      @section = Section.new({"Intro" => 10}, 2, @table)
-      @nested_section = Section.new({"Intro" => [{"Foo" => 10}]}, 2, @table)
+      @section = Section.new({"Intro" => 10}, 2, @start_time)
+      @nested_section = Section.new({"Intro" => [{"Foo" => 10}]}, 2, @start_time)
     end
 
     it 'initializes with a name, duration and a number' do
@@ -184,7 +191,7 @@ class Timetable
               ]}
             ]}
           ]
-        }, 2, @table)
+        }, 2, @start_time)
         deeply_nested.to_s.must_equal <<CODE.strip
 2. Intro
   2.0. Foo
